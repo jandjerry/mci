@@ -1,0 +1,107 @@
+#!/bin/bash
+
+DIR=$(cd $(dirname "$0"); pwd);
+
+WORKSPACE_DIR="$DIR/../../.."
+
+MAIN_DIR="$WORKSPACE_DIR/main"
+MAIN_REPO_DIR="$MAIN_DIR/repo.git"
+
+BUILD_DIR="$WORKSPACE_DIR/build"
+BUILD_REPO_DIR="$BUILD_DIR/repo.git"
+BUILD_WORK_TREE_DIR="$BUILD_DIR/worktree"
+
+
+CI_DATA_DIR="/tmp/mci-build"
+CI_BUILD_STATUS_DIR="$CI_DATA_DIR/build-status"
+
+BUILD_SCRIPT="$BUILD_DIR/build.sh"
+
+
+#This will run only once
+while read oldrev newrev refname
+do
+
+	#ssh user
+	ssh_user=$(whoami)
+
+	IFS='/' read -a array <<< "$refname"
+	branch=${array[2]}
+	
+	#This name will be used for delete branch
+	branch_name="${branch}_${ssh_user}_${newrev}"
+	
+	#This name will be used for create branch
+	branch_full_name="refs/heads/${branch_name}"
+	
+	#Deliver code to build repo test 1st way => faster because it like a commit push only new things
+	#cd $BUILD_REPO_DIR #TODO this will faster deliver code to build repo
+	#GIT_WORK_TREE=$BUILD_WORK_TREE_DIR git checkout -b $branch_name master #Create branch from master
+
+	git push $BUILD_REPO_DIR  $newrev:$branch_full_name -f #We dont care about forcing
+	
+	#Deliver code to build test by create archive an unarchive => slow, compress all things, copy, extract, test 
+	#git archive $newrev | tar -x -C /dwin/WorkspaceAll/ci-server/builder
+
+	#switch to branch which has just pushed to //TODO does this affect current git ???
+	
+	cd $BUILD_REPO_DIR
+	GIT_WORK_TREE=$BUILD_WORK_TREE_DIR git checkout $branch_name
+	#chmod 777 * -Rf
+	#GIT_WORK_TREE=$BUILD_WORK_TREE_DIR git reset HEAD --hard
+	
+	echo "NOTICE: Start building branch ${branch_name}"
+	echo "NOTICE: Building with user $(whoami)"
+	cd $BUILD_WORK_TREE_DIR
+	#execute build script from application and pass the file should be write status to
+	BUILD_STATUS_FILE="${CI_BUILD_STATUS_DIR}/${branch_name}_status"
+
+
+	if [ -f $BUILD_SCRIPT ] ; then  #Currently stand in work tree dir, build.sh must be exist
+		#chmod +x build.sh
+		/bin/bash $BUILD_SCRIPT $BUILD_STATUS_FILE
+	else 
+		echo "
+		WARNING: No build file! You need build.sh file in your app root dir
+			Skip building and cancel push
+		"
+		exit 1
+	fi
+	
+	#GIT_WORK_TREE=$BUILD_WORK_TREE_DIR git checkout . #TODO let ignore file permission
+	#Process build result
+	if [ -f $BUILD_STATUS_FILE ]; then
+		result=$(cat $BUILD_STATUS_FILE)
+		rm $BUILD_STATUS_FILE
+		
+		if [ "$result" != "1" ]; then
+			echo "WARNING: Build failed, rolling back!"
+			cd $BUILD_REPO_DIR
+			GIT_WORK_TREE=$BUILD_WORK_TREE_DIR git checkout master
+			GIT_WORK_TREE=$BUILD_WORK_TREE_DIR git branch -D $branch_name 
+			echo "WARNING: Push is rejected due to failed build"
+			
+			chmod 777 $BUILD_REPO_DIR -Rf
+			chmod 777 $$MAIN_REPO_DIR -Rf
+
+			exit 1
+		else
+			#Build success => merge allthing to branch
+			cd $BUILD_REPO_DIR
+			GIT_WORK_TREE=$BUILD_WORK_TREE_DIR git checkout master
+			GIT_WORK_TREE=$BUILD_WORK_TREE_DIR git merge $branch_name
+			GIT_WORK_TREE=$BUILD_WORK_TREE_DIR git branch -D $branch_name  #Remove build branch, it will never be used again
+
+			chmod 777 $BUILD_REPO_DIR -Rf
+			chmod 777 $$MAIN_REPO_DIR -Rf
+
+			echo "NOTICE: Build successfully. Let's see what post-receive do :)"
+			exit 0
+		fi
+	else
+		echo "ERROR: Something wrong with building... canceled push."
+		exit 1
+	fi
+done
+echo "ERROR: Unknow error! Skip your push."
+exit 1

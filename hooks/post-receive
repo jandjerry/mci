@@ -1,0 +1,36 @@
+#!/bin/bash
+
+DIR=$(cd $(dirname "$0"); pwd);
+
+WORKSPACE_DIR="$DIR/../../.."
+BUILD_DIR="$WORKSPACE_DIR/build"
+DEPLOY_SCRIPT="$BUILD_DIR/deploy.sh"
+
+GIT_END_REPO="__GIT_END_REPO__"
+#GIT_END_REPO="git@bitbucket.org:jerryepinion/ci-test.git"
+
+echo "...Hmm what will I do?"
+echo "Start forwarding commit to bitbucket..."
+
+while read oldrev newrev refname
+do
+	git push $GIT_END_REPO  $newrev:$refname
+	success=$?
+	if [[ $success -eq 0 ]]; then
+
+	     #Read branch name, this should be environment name also
+        IFS='/' read -a array <<< "$refname"
+        branch=${array[2]}
+
+        if [ $refname == "refs/heads/production" ] || [ $refname == "refs/heads/staging" ] ; then
+            /bin/bash $DEPLOY_SCRIPT $branch
+        fi
+
+    else
+        echo "ERROR: Can't push to bitucket ($GIT_END_REPO)"
+        exit 1
+    fi
+
+done
+
+exit 0
