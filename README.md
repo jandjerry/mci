@@ -54,4 +54,4 @@ That's all
 
 - Feel free to fork, edit, redistribute.... or do anything you want because I don't understand licence types
  
-- It's will be great if I got your pull requests to improve this :) 
+- It will be great if I got your pull requests to improve this :) 
